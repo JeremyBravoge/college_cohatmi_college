@@ -220,7 +220,7 @@ export const updateStudent = async (req, res) => {
     if (age !== undefined) { fields.push("age = ?"); values.push(age); }
     if (gender !== undefined) { fields.push("gender = ?"); values.push(gender); }
     if (status !== undefined) { fields.push("status = ?"); values.push(status); }
-    if (department_id !== undefined) { fields.push("department_id = ?"); values.push(department_id); }
+    if (department_id !== undefined) { fields.push("department_id = ?"); values.push(department_id === '' ? null : department_id); }
     if (id_number !== undefined) { fields.push("id_number = ?"); values.push(id_number); }
     if (date_of_birth !== undefined) { fields.push("date_of_birth = ?"); values.push(date_of_birth); }
     if (address !== undefined) { fields.push("address = ?"); values.push(address); }
