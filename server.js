@@ -40,7 +40,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 
 /* ================================
-   ✅ CORS CONFIG (PRODUCTION SAFE)
+   ✅ GLOBAL CORS (PRODUCTION SAFE)
 ================================ */
 const allowedOrigins = [
   "https://cohatmicollege.vercel.app"
@@ -49,19 +49,13 @@ const allowedOrigins = [
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true); // server-to-server or Postman
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error("CORS not allowed"));
-    }
+    if (allowedOrigins.includes(origin)) callback(null, true);
+    else callback(new Error("CORS not allowed"));
   },
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true
 }));
-
-// ✅ Preflight for all routes (fixed)
-app.options("/*", cors());
 
 /* ================================
    BODY PARSING
@@ -106,11 +100,11 @@ app.use("/api/ranking", rankingRoutes);
    REACT FRONTEND SERVING (PRODUCTION)
 ================================ */
 if (process.env.NODE_ENV === "production") {
-  const buildPath = path.join(__dirname, "client", "dist"); // adjust if your build folder is different
+  const buildPath = path.join(__dirname, "client", "dist"); // adjust if your React build folder differs
   app.use(express.static(buildPath));
 
-  // ✅ Catch-all route for React SPA (fixed)
-  app.get("/*", (req, res) => {
+  // ✅ Catch-all route for React SPA
+  app.get("*", (req, res) => {
     res.sendFile(path.join(buildPath, "index.html"));
   });
 }
