@@ -60,8 +60,8 @@ app.use(cors({
   credentials: true
 }));
 
-// Required for preflight requests
-app.options("*", cors());
+// ✅ Preflight for all routes (fixed)
+app.options("/*", cors());
 
 /* ================================
    BODY PARSING
@@ -109,7 +109,7 @@ if (process.env.NODE_ENV === "production") {
   const buildPath = path.join(__dirname, "client", "dist"); // adjust if your build folder is different
   app.use(express.static(buildPath));
 
-  // Catch-all route for React SPA
+  // ✅ Catch-all route for React SPA (fixed)
   app.get("/*", (req, res) => {
     res.sendFile(path.join(buildPath, "index.html"));
   });
