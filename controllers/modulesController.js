@@ -3,7 +3,7 @@ import pool from "../config/db.js";
 // ✅ GET all modules (optionally filter by course_id or level_id)
 export const getModules = async (req, res) => {
   try {
-    const { course_id, level_id } = req.query;
+    const { course_id, level_id } = req.params || req.query;
     let query = `
       SELECT m.id, m.code, m.title, m.course_id, m.level_id,
              c.name AS course_name, l.name AS level_name
@@ -29,6 +29,61 @@ export const getModules = async (req, res) => {
   } catch (err) {
     console.error("❌ Error fetching modules:", err);
     res.status(500).json({ error: "Failed to fetch modules", details: err.message });
+  }
+};
+
+// ✅ CREATE a new module
+export const createModule = async (req, res) => {
+  try {
+    const { code, title, course_id, level_id } = req.body;
+    if (!code || !title || !course_id || !level_id) {
+      return res.status(400).json({ error: "Code, title, course_id, and level_id are required" });
+    }
+    const [result] = await pool.query(
+      "INSERT INTO modules (code, title, course_id, level_id) VALUES (?, ?, ?, ?)",
+      [code, title, course_id, level_id]
+    );
+    res.status(201).json({ id: result.insertId, code, title, course_id, level_id });
+  } catch (err) {
+    console.error("❌ Error creating module:", err);
+    res.status(500).json({ error: "Failed to create module", details: err.message });
+  }
+};
+
+// ✅ UPDATE an existing module
+export const updateModule = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { code, title, course_id, level_id } = req.body;
+    if (!code || !title || !course_id || !level_id) {
+      return res.status(400).json({ error: "Code, title, course_id, and level_id are required" });
+    }
+    const [result] = await pool.query(
+      "UPDATE modules SET code = ?, title = ?, course_id = ?, level_id = ? WHERE id = ?",
+      [code, title, course_id, level_id, id]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: "Module not found" });
+    }
+    res.json({ id: Number(id), code, title, course_id, level_id });
+  } catch (err) {
+    console.error("❌ Error updating module:", err);
+    res.status(500).json({ error: "Failed to update module", details: err.message });
+  }
+};
+
+// ✅ DELETE a module
+export const deleteModule = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [result] = await pool.query("DELETE FROM modules WHERE id = ?", [id]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: "Module not found" });
+    }
+    res.json({ message: "Module deleted successfully" });
+  } catch (err) {
+    console.error("❌ Error deleting module:", err);
+    res.status(500).json({ error: "Failed to delete module", details: err.message });
   }
 };
 

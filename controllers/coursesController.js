@@ -37,6 +37,64 @@ export const getAllCourses = async (req, res) => {
   }
 };
 
+// ✅ GET levels for a specific course
+export const getLevelsForCourse = async (req, res) => {
+  const { courseId } = req.params;
+  try {
+    const [rows] = await pool.query(`
+      SELECT DISTINCT l.id, l.name
+      FROM levels l
+      JOIN modules m ON l.id = m.level_id
+      WHERE m.course_id = ?
+      ORDER BY l.name ASC
+    `, [courseId]);
+    res.json(rows);
+  } catch (err) {
+    console.error("❌ Error fetching levels for course:", err);
+    res.status(500).json({ error: "Failed to fetch levels", details: err.message });
+  }
+};
+
+// ✅ GET performance for a specific course and level
+export const getCourseLevelPerformance = async (req, res) => {
+  const { courseId, levelId } = req.params;
+  try {
+    const [rows] = await pool.query(`
+      SELECT 
+        COUNT(DISTINCT sp.student_id) as entries,
+        ROUND(AVG((sp.theory_marks + sp.practical_marks)/2), 2) as meanMarks,
+        CASE 
+          WHEN AVG((sp.theory_marks + sp.practical_marks)/2) >= 80 THEN 'Distinction'
+          WHEN AVG((sp.theory_marks + sp.practical_marks)/2) >= 65 THEN 'Pass'
+          WHEN AVG((sp.theory_marks + sp.practical_marks)/2) >= 50 THEN 'Pass'
+          ELSE 'Fail'
+        END as grade,
+        COALESCE(GROUP_CONCAT(DISTINCT i.name SEPARATOR ', '), 'N/A') as teacher
+      FROM student_performance sp
+      JOIN modules m ON sp.module_id = m.id
+      LEFT JOIN instructor_courses ic ON m.course_id = ic.course_id
+      LEFT JOIN instructors i ON ic.instructor_id = i.id
+      WHERE m.course_id = ? AND m.level_id = ?
+    `, [courseId, levelId]);
+
+    const data = rows[0];
+    if (!data || data.entries === 0) {
+      return res.json([]);
+    }
+
+    res.json([{
+      levelId: parseInt(levelId),
+      entries: data.entries,
+      meanMarks: data.meanMarks,
+      grade: data.grade,
+      teacher: data.teacher
+    }]);
+  } catch (err) {
+    console.error("❌ Error fetching performance:", err);
+    res.status(500).json({ error: "Failed to fetch performance", details: err.message });
+  }
+};
+
 // ✅ ADD a new course
 export const addCourse = async (req, res) => {
   try {

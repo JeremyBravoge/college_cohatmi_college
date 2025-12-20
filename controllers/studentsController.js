@@ -1,20 +1,121 @@
 import pool from "../config/db.js";
+import { upload } from "../middlewares/multer.js";
 
-// ✅ GET all students
+// Helper: generate next student ID STU###
+async function generateStudentId(conn) {
+  const [rows] = await conn.query(
+    "SELECT MAX(CAST(SUBSTRING(id, 4) AS UNSIGNED)) AS maxId FROM students"
+  );
+  const nextNumber = (rows[0].maxId || 0) + 1;
+  return `STU${String(nextNumber).padStart(3, "0")}`;
+}
+
+// Helper: check whether a student has any incomplete modules for a given course
+async function hasIncompleteModules(conn, studentId, courseId) {
+  const [rows] = await conn.query(
+    `SELECT 1
+     FROM student_modules sm
+     WHERE sm.student_id = ?
+       AND sm.course_id = ?
+       AND sm.status != 'Completed'
+     LIMIT 1`,
+    [studentId, courseId]
+  );
+  return rows.length > 0;
+}
+
+// Helper: mark modules completed when there's a matching performance record
+async function syncModuleCompletionFromPerformance(conn, studentId, courseId) {
+  await conn.query(
+    `UPDATE student_modules sm
+     JOIN student_performance sp
+       ON sm.student_id = sp.student_id AND sm.module_id = sp.module_id
+     SET sm.status = 'Completed'
+     WHERE sm.status != 'Completed'
+       AND sm.student_id = ?
+       AND sm.course_id = ?
+       AND sp.grade IS NOT NULL`,
+    [studentId, courseId]
+  );
+}
+
+// Helper: ensure student may enroll in a course (no active incomplete modules or enrollments)
+async function ensureCanEnroll(conn, studentId, courseId) {
+  // First sync module completion from performance table (if any)
+  await syncModuleCompletionFromPerformance(conn, studentId, courseId);
+
+  // If there are incomplete modules for ANY course (depending on business rules)
+  // we check modules for the SAME course first (most common); adapt if you need cross-course checks
+  const incompleteSameCourse = await hasIncompleteModules(conn, studentId, courseId);
+  if (incompleteSameCourse) {
+    throw new Error('Student must complete current course before enrolling in another');
+  }
+
+  // Also check enrollments: do we have existing non-completed enrollment for the same course?
+  const [enr] = await conn.query(
+    `SELECT id, status FROM enrollments WHERE student_id = ? AND course_id = ? LIMIT 1`,
+    [studentId, courseId]
+  );
+  if (enr.length > 0 && enr[0].status !== 'Completed') {
+    // There is an active enrollment for the same course — business decision: update instead of insert
+    return { existingEnrollmentId: enr[0].id };
+  }
+
+  return { existingEnrollmentId: null };
+}
+
+// Create activity log helper
+async function createActivity(conn, studentId, action, courseId) {
+  await conn.query(
+    `INSERT INTO activities (student_id, action, course, type, created_at)
+     VALUES (?, ?, (SELECT name FROM courses WHERE id = ?), ?, NOW())`,
+    [studentId, action, courseId, 'enrollment']
+  );
+}
+
+// ------------------------- Controller functions -------------------------
+
+// GET student by ID
+export const getStudentById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [rows] = await pool.query(
+      `SELECT s.id, s.first_name, s.last_name, s.email, s.phone, s.age, s.gender,
+              s.department_id, s.admission_date, s.status, s.branch_id,
+              s.guardian_name, s.guardian_contact, s.photo,
+              b.name AS branch_name
+       FROM students s
+       LEFT JOIN branches b ON s.branch_id = b.id
+       WHERE s.id = ?`,
+      [id]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+
+    res.json(rows[0]);
+  } catch (err) {
+    console.error("Error fetching student:", err);
+    res.status(500).json({ error: "Failed to fetch student" });
+  }
+};
+
+// GET all students with aggregate info
 export const getAllStudents = async (req, res) => {
   try {
     const [students] = await pool.query(
       `SELECT
         s.id AS student_id,
         COALESCE(CONCAT_WS(' ', s.first_name, s.last_name), 'No Name') AS name,
-        s.email,
+        s.email, s.photo AS image_url,
         COALESCE(s.phone, 'N/A') AS phone,
         COALESCE(s.gender, 'N/A') AS gender,
-        COALESCE(ANY_VALUE(d.name), 'No Department') AS department,   -- ✅ fix here
+        MAX(COALESCE(d.name, 'No Department')) AS department,
         COALESCE(GROUP_CONCAT(DISTINCT c.name SEPARATOR ', '), 'No Course') AS course,
         DATE_FORMAT(s.admission_date, '%Y-%m-%d') AS admission_date,
         COALESCE(s.status, 'Inactive') AS status,
-        IFNULL(ROUND(SUM(CASE WHEN a.status = 'present' THEN 1 ELSE 0 END) / COUNT(a.id) * 100, 2), 0) AS attendance,
+        IFNULL(ROUND(SUM(CASE WHEN a.status = 'present' THEN 1 ELSE 0 END) / NULLIF(COUNT(a.id),0) * 100, 2), 0) AS attendance,
         IFNULL(SUM(f.amount_paid), 0) AS totalPaid,
         IFNULL(SUM(f.total_amount), 0) AS totalFees,
         IFNULL(SUM(f.total_amount) - SUM(f.amount_paid), 0) AS feesPending,
@@ -47,269 +148,283 @@ export const getAllStudents = async (req, res) => {
   }
 };
 
-
-
-// ✅ POST /api/students/register
+// POST /api/students/register
 export const registerStudent = async (req, res) => {
+  // file handling (if using multer) - the middleware should run before this handler
   try {
-    const {
-      firstName,
-      lastName,
-      email,
-      phone,
-      age,
-      gender,
-      department_id,
-      admission_date,
-      status,
-      branch_id,
-      guardian_name,
-      guardian_contact,
-      programChoice,   // course_id or slug
-      intakeYear,      // intake_id
-      totalFees = 0,   // total course fees
-      amountPaid = 0   // initial payment
-    } = req.body;
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
 
-    // Generate unique student ID
-    const [rows] = await pool.query(
-      "SELECT MAX(CAST(SUBSTRING(id, 4) AS UNSIGNED)) AS maxId FROM students"
-    );
-    const nextNumber = (rows[0].maxId || 0) + 1;
-    const studentId = `STU${String(nextNumber).padStart(3, "0")}`;
-
-    // Insert student
-    await pool.query(
-      `INSERT INTO students 
-       (id, first_name, last_name, email, phone, age, gender, department_id, admission_date, status, branch_id, guardian_name, guardian_contact)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        studentId,
-        firstName || null,
-        lastName || null,
-        email,
-        phone || null,
-        age || null,
-        gender || null,
-        department_id || null,
-        admission_date || new Date(),
-        status || "Active",
-        branch_id || null,
-        guardian_name || null,
-        guardian_contact || null,
-      ]
-    );
-
-    // Insert enrollment if course selected
-    if (programChoice && intakeYear) {
-      const courseMap = {
-        "computer-science": 1,
-        "business-admin": 2,
-        "engineering": 3,
-        "medicine": 4,
-        "law": 5,
-      };
-      const courseId = courseMap[programChoice] || parseInt(programChoice);
-      if (courseId) {
-        await pool.query(
-          `INSERT INTO enrollments (student_id, course_id, intake_id, enrollment_date, status)
-           VALUES (?, ?, ?, CURDATE(), 'Enrolled')`,
-          [studentId, courseId, intakeYear]
-        );
-
-        // Log enrollment activity
-        await pool.query(
-          `INSERT INTO activities (student_id, action, course, type, created_at)
-           VALUES (?, 'Enrolled in', (SELECT name FROM courses WHERE id = ?), 'enrollment', NOW())`,
-          [studentId, courseId]
-        );
-      }
-    }
-
-    // Insert initial fee record
-    if (totalFees > 0) {
-      await pool.query(
-        `INSERT INTO fees (student_id, total_amount, amount_paid, payment_date)
-         VALUES (?, ?, ?, CURDATE())`,
-        [studentId, totalFees, amountPaid]
-      );
-    }
-
-    res.status(201).json({
-      message: "Student registered successfully",
-      student: {
-        student_id: studentId,
-        name: `${firstName || ""} ${lastName || ""}`.trim() || "No Name",
+      const {
+        firstName,
+        lastName,
         email,
         phone,
+        age,
         gender,
-        department: department_id || "No Department",
-        course: programChoice || "No Course",
-        admission_date: admission_date || new Date(),
-        status: status || "Active",
-        totalPaid: amountPaid,
-        totalFees,
-        feesPending: totalFees - amountPaid,
-        performanceScore: 0,
-        performance: "Poor",
-      }
-    });
+        department_id,
+        admission_date,
+        status,
+        branch_id,
+        guardian_name,
+        guardian_contact,
+        guardianEmail,
+        guardianRelationship,
+        guardianAddress,
+        idNumber,
+        dateOfBirth,
+        nationality,
+        county,
+        address,
+        courseId,
+        intakeId,
+        totalFees = 0,
+        amountPaid = 0,
+      } = req.body;
 
-  } catch (error) {
-    console.error("❌ DB Insert Error:", error);
-    res.status(500).json({ error: error.message });
+      const photoPath = req.file ? req.file.path.replace(/\\/g, "/") : null;
+
+      // Generate unique student ID
+      const studentId = await generateStudentId(conn);
+
+      // Insert student
+      await conn.query(
+        `INSERT INTO students
+          (id, first_name, last_name, email, phone, age, gender, department_id, admission_date, status, branch_id, guardian_name, guardian_contact, photo, id_number, date_of_birth, nationality, county, address, guardian_email, guardian_relationship, guardian_address)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          studentId,
+          firstName || null,
+          lastName || null,
+          email || null,
+          phone || null,
+          age || null,
+          gender || null,
+          department_id || null,
+          admission_date || new Date(),
+          status || "Active",
+          branch_id || null,
+          guardian_name || null,
+          guardian_contact || null,
+          photoPath,
+          idNumber || null,
+          dateOfBirth || null,
+          nationality || null,
+          county || null,
+          address || null,
+          guardianEmail || null,
+          guardianRelationship || null,
+          guardianAddress || null,
+        ]
+      );
+
+      // Enroll in course if courseId & intakeId provided
+      if (courseId && intakeId) {
+        const courseIdInt = parseInt(courseId);
+        const intakeIdInt = parseInt(intakeId);
+        if (!isNaN(courseIdInt) && !isNaN(intakeIdInt)) {
+          // Ensure student is allowed to enroll (checks modules & existing enrollments)
+          const allowed = await ensureCanEnroll(conn, studentId, courseIdInt);
+
+          if (allowed.existingEnrollmentId) {
+            // there is an existing enrollment row -> update it
+            await conn.query(
+              `UPDATE enrollments SET intake_id = ?, enrollment_date = CURDATE(), status = 'Enrolled', branch_id = ? WHERE id = ?`,
+              [intakeIdInt, branch_id || null, allowed.existingEnrollmentId]
+            );
+          } else {
+            await conn.query(
+              `INSERT INTO enrollments (student_id, course_id, intake_id, enrollment_date, status, branch_id)
+               VALUES (?, ?, ?, CURDATE(), 'Enrolled', ?)`,
+              [studentId, courseIdInt, intakeIdInt, branch_id || null]
+            );
+          }
+
+          await createActivity(conn, studentId, 'Enrolled in', courseIdInt);
+
+          // Update student department
+          await conn.query(
+            `UPDATE students s
+             JOIN courses c ON c.id = ?
+             SET s.department_id = c.department_id
+             WHERE s.id = ?`,
+            [courseIdInt, studentId]
+          );
+        }
+      }
+
+      // Insert initial fees
+      if (totalFees > 0) {
+        await conn.query(
+          `INSERT INTO fees (student_id, total_amount, amount_paid, payment_date)
+           VALUES (?, ?, ?, CURDATE())`,
+          [studentId, totalFees, amountPaid]
+        );
+      }
+
+      await conn.commit();
+
+      res.status(201).json({
+        message: "Student registered successfully",
+        student: {
+          student_id: studentId,
+          name: `${firstName || ""} ${lastName || ""}`.trim() || "No Name",
+          email,
+          phone,
+          gender,
+          department: department_id || "No Department",
+          course: courseId || "No Course",
+          admission_date: admission_date || new Date(),
+          status: status || "Active",
+          totalPaid: amountPaid,
+          totalFees,
+          feesPending: totalFees - amountPaid,
+          performanceScore: 0,
+          performance: "Poor",
+          photo: photoPath,
+        },
+      });
+    } catch (err) {
+      await conn.rollback();
+      console.error("❌ DB Insert Error (transaction):", err);
+      res.status(500).json({ error: err.message });
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    console.error("Connection Error:", err);
+    res.status(500).json({ error: "Failed to register student" });
   }
 };
 
-// Delete student by student_id
+// DELETE student by ID
 export const deleteStudent = async (req, res) => {
-  const { id } = req.params; // student ID
+  const { id } = req.params;
 
   try {
-    // Delete dependent rows first
-    await pool.query("DELETE FROM enrollments WHERE student_id = ?", [id]);
-    await pool.query("DELETE FROM fees WHERE student_id = ?", [id]);
-    await pool.query("DELETE FROM activities WHERE student_id = ?", [id]);
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
 
-    // Delete the student
-    const [result] = await pool.query("DELETE FROM students WHERE id = ?", [id]);
+      await conn.query("DELETE FROM enrollments WHERE student_id = ?", [id]);
+      await conn.query("DELETE FROM fees WHERE student_id = ?", [id]);
+      await conn.query("DELETE FROM activities WHERE student_id = ?", [id]);
 
-    if (result.affectedRows === 0) 
-      return res.status(404).json({ message: "Student not found" });
+      const [result] = await conn.query("DELETE FROM students WHERE id = ?", [id]);
 
-    res.status(200).json({ message: "Student deleted successfully" });
+      await conn.commit();
+
+      if (result.affectedRows === 0)
+        return res.status(404).json({ message: "Student not found" });
+
+      res.status(200).json({ message: "Student deleted successfully" });
+    } catch (err) {
+      await conn.rollback();
+      console.error("Delete Error:", err);
+      res.status(500).json({ message: "Failed to delete student" });
+    } finally {
+      conn.release();
+    }
   } catch (err) {
-    console.error("Delete Error:", err);
+    console.error("Connection Error:", err);
     res.status(500).json({ message: "Failed to delete student" });
   }
 };
 
-
+// UPDATE student
 export const updateStudent = async (req, res) => {
   const { id } = req.params;
-  const {
-    firstName,
-    lastName,
-    email,
-    phone,
-    age,
-    gender,
-    status,
-    department_id,
-    id_number,
-    date_of_birth,
-    address,
-    county,
-    nationality,
-    guardian_name,
-    guardian_contact,
-    branch_id,
-    admission_date,
-    programChoice,
-    intakeYear
-  } = req.body;
+  const fields = [];
+  const values = [];
+
+  const updatableFields = [
+    "firstName",
+    "lastName",
+    "email",
+    "phone",
+    "age",
+    "gender",
+    "status",
+    "department_id",
+    "id_number",
+    "date_of_birth",
+    "address",
+    "county",
+    "nationality",
+    "guardian_name",
+    "guardian_contact",
+    "branch_id",
+    "admission_date",
+  ];
+
+  updatableFields.forEach((f) => {
+    if (req.body[f] !== undefined) {
+      fields.push(`${f.replace(/([A-Z])/g, "_$1").toLowerCase()} = ?`);
+      values.push(req.body[f] === "" ? null : req.body[f]);
+    }
+  });
 
   try {
-    const fields = [];
-    const values = [];
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
 
-    if (firstName !== undefined) { fields.push("first_name = ?"); values.push(firstName); }
-    if (lastName !== undefined) { fields.push("last_name = ?"); values.push(lastName); }
-    if (email !== undefined) { fields.push("email = ?"); values.push(email); }
-    if (phone !== undefined) { fields.push("phone = ?"); values.push(phone); }
-    if (age !== undefined) { fields.push("age = ?"); values.push(age); }
-    if (gender !== undefined) { fields.push("gender = ?"); values.push(gender); }
-    if (status !== undefined) { fields.push("status = ?"); values.push(status); }
-    if (department_id !== undefined) { fields.push("department_id = ?"); values.push(department_id === '' ? null : department_id); }
-    if (id_number !== undefined) { fields.push("id_number = ?"); values.push(id_number); }
-    if (date_of_birth !== undefined) { fields.push("date_of_birth = ?"); values.push(date_of_birth); }
-    if (address !== undefined) { fields.push("address = ?"); values.push(address); }
-    if (county !== undefined) { fields.push("county = ?"); values.push(county); }
-    if (nationality !== undefined) { fields.push("nationality = ?"); values.push(nationality); }
-    if (guardian_name !== undefined) { fields.push("guardian_name = ?"); values.push(guardian_name); }
-    if (guardian_contact !== undefined) { fields.push("guardian_contact = ?"); values.push(guardian_contact); }
-    if (branch_id !== undefined) {
-      // ✅ Validate branch_id exists
-      const [branchCheck] = await pool.query("SELECT id FROM branches WHERE id = ?", [branch_id]);
-      if (branchCheck.length === 0) {
-        return res.status(400).json({ message: `Branch ID ${branch_id} does not exist` });
+      if (fields.length > 0) {
+        const sql = `UPDATE students SET ${fields.join(", ")} WHERE id = ?`;
+        values.push(id);
+        const [result] = await conn.query(sql, values);
+        if (result.affectedRows === 0) {
+          await conn.rollback();
+          return res.status(404).json({ message: "Student not found" });
+        }
       }
-      fields.push("branch_id = ?");
-      values.push(branch_id);
+
+      // Update enrollment if programChoice & intakeYear
+      if (req.body.programChoice && req.body.intakeYear) {
+        const courseId = parseInt(req.body.programChoice);
+        const intakeId = parseInt(req.body.intakeYear);
+
+        if (!isNaN(courseId) && !isNaN(intakeId)) {
+          const [enrollment] = await conn.query(
+            `SELECT id FROM enrollments WHERE student_id = ? LIMIT 1`,
+            [id]
+          );
+
+          if (enrollment.length > 0) {
+            await conn.query(
+              `UPDATE enrollments SET course_id = ?, intake_id = ?, status = 'Enrolled' WHERE student_id = ?`,
+              [courseId, intakeId, id]
+            );
+          } else {
+            await conn.query(
+              `INSERT INTO enrollments (student_id, course_id, intake_id, enrollment_date, status)
+               VALUES (?, ?, ?, CURDATE(), 'Enrolled')`,
+              [id, courseId, intakeId]
+            );
+          }
+
+          // Update student department
+          await conn.query(
+            `UPDATE students s JOIN courses c ON c.id = ? SET s.department_id = c.department_id WHERE s.id = ?`,
+            [courseId, id]
+          );
+        }
+      }
+
+      await conn.commit();
+      res.status(200).json({ message: "Student updated successfully" });
+    } catch (err) {
+      await conn.rollback();
+      console.error("Update Error:", err);
+      res.status(500).json({ message: "Failed to update student" });
+    } finally {
+      conn.release();
     }
-    if (admission_date !== undefined) { fields.push("admission_date = ?"); values.push(admission_date); }
-
-    if (fields.length === 0 && !programChoice) {
-      return res.status(400).json({ message: "No fields to update" });
-    }
-
-    if (fields.length > 0) {
-      const sql = `UPDATE students SET ${fields.join(", ")} WHERE id = ?`;
-      values.push(id);
-
-      const [result] = await pool.query(sql, values);
-      if (result.affectedRows === 0) {
-        return res.status(404).json({ message: "Student not found" });
-      }
-    }
-
-    if (programChoice && intakeYear) {
-      const courseMap = {
-        "computer-science": 1,
-        "business-admin": 2,
-        "engineering": 3,
-        "medicine": 4,
-        "law": 5,
-        "computer-packages": 1,
-        "graphics-designs": 2,
-        "web-design": 3,
-        "photography": 5
-      };
-
-      const courseId = courseMap[programChoice] || parseInt(programChoice);
-
-      if (!courseId || isNaN(courseId)) {
-        console.error("Invalid programChoice:", programChoice);
-        return res.status(400).json({ message: "Invalid programChoice" });
-      }
-
-      if (!intakeYear || isNaN(parseInt(intakeYear))) {
-        console.error("Invalid intakeYear:", intakeYear);
-        return res.status(400).json({ message: "Invalid intakeYear" });
-      }
-
-      const [enrollment] = await pool.query(
-        `SELECT id FROM enrollments WHERE student_id = ? LIMIT 1`,
-        [id]
-      );
-
-      if (enrollment.length > 0) {
-        await pool.query(
-          `UPDATE enrollments
-           SET course_id = ?, intake_id = ?, status = 'Enrolled'
-           WHERE student_id = ?`,
-          [courseId, intakeYear, id]
-        );
-      } else {
-        await pool.query(
-          `INSERT INTO enrollments (student_id, course_id, intake_id, enrollment_date, status)
-           VALUES (?, ?, ?, CURDATE(), 'Enrolled')`,
-          [id, courseId, intakeYear]
-        );
-      }
-
-      await pool.query(
-        `UPDATE students s
-         JOIN courses c ON c.id = ?
-         SET s.department_id = c.department_id
-         WHERE s.id = ?`,
-        [courseId, id]
-      );
-    }
-
-    res.status(200).json({ message: "Student updated successfully" });
   } catch (err) {
-    console.error("Update Error:", err);
+    console.error("Connection Error:", err);
     res.status(500).json({ message: "Failed to update student" });
   }
 };
+
+// End of file

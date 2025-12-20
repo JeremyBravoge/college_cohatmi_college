@@ -1,6 +1,9 @@
 import express from "express";
-import { getAllIntakes } from "../controllers/intakesController.js";
+import { getAllIntakes, createIntake, updateIntake, deleteIntake } from "../controllers/intakesController.js";
 
 const router = express.Router();
-router.get("/intakes", getAllIntakes);
+router.get("/", getAllIntakes);
+router.post("/", createIntake);
+router.put("/:id", updateIntake);
+router.delete("/:id", deleteIntake);
 export default router;

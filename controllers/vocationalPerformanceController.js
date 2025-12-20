@@ -4,6 +4,67 @@ import pool from "../config/db.js"; // adjust path if needed
 // Controller Functions
 // ======================
 
+// @desc Get aggregated department performance data for analysis
+export const getDepartmentPerformance = async (req, res) => {
+  try {
+    // Query to get aggregated performance per department
+    const [rows] = await pool.query(`
+      SELECT
+        d.id AS department_id,
+        d.name AS department_name,
+        COUNT(DISTINCT s.id) AS total_students,
+        ROUND(AVG((sp.theory_marks + sp.practical_marks) / 2), 1) AS average_score,
+        CONCAT(s.first_name, ' ', s.last_name) AS student_name,
+        s.id AS student_id
+      FROM departments d
+      LEFT JOIN students s ON d.id = s.department_id
+      LEFT JOIN student_performance sp ON s.id = sp.student_id
+      GROUP BY d.id, d.name, s.id, s.first_name, s.last_name
+      ORDER BY d.id, average_score DESC
+    `);
+
+    // Aggregate per department
+    const deptMap = new Map();
+    rows.forEach(row => {
+      const deptId = row.department_id;
+      if (!deptMap.has(deptId)) {
+        deptMap.set(deptId, {
+          department_id: deptId,
+          department_name: row.department_name,
+          total_students: row.total_students,
+          average_score: row.average_score || 0,
+          students: []
+        });
+      }
+      if (row.student_name) {
+        deptMap.get(deptId).students.push({
+          student_name: row.student_name,
+          average_score: row.average_score || 0
+        });
+      }
+    });
+
+    // Flatten to array of student-level data for the component
+    const performanceData = [];
+    deptMap.forEach(dept => {
+      dept.students.forEach(student => {
+        performanceData.push({
+          department_id: dept.department_id,
+          department_name: dept.department_name,
+          total_students: dept.total_students,
+          average_score: student.average_score,
+          student_name: student.student_name
+        });
+      });
+    });
+
+    res.json(performanceData);
+  } catch (err) {
+    console.error("❌ Error fetching department performance:", err);
+    res.status(500).json({ error: "Failed to fetch department performance", details: err.message });
+  }
+};
+
 // @desc Get full student performance by admission number + level
 export const getVocationalPerformance = async (req, res) => {
   const { admissionNo, level } = req.query;
@@ -25,7 +86,7 @@ export const getVocationalPerformance = async (req, res) => {
       `SELECT s.first_name, s.last_name, s.id AS student_id,
               s.course_id, c.name AS tradeArea,
               b.name AS trainingCenter, l.name AS level_name,
-              s.admission_date, s.status
+              s.admission_date, s.status, s.photo AS profileImage
        FROM students s
        LEFT JOIN courses c ON s.course_id = c.id
        LEFT JOIN branches b ON s.branch_id = b.id
@@ -87,6 +148,7 @@ export const getVocationalPerformance = async (req, res) => {
         trainingCenter: student.trainingCenter,
         level: student.level_name,
         duration: "6 Months",
+        profileImage: student.profileImage,
       },
       performance: {
         totalModules: performance.totalModules,
