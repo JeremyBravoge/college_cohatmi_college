@@ -3,7 +3,9 @@ import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
 
-/* ROUTES */
+/* ================================
+   ROUTES IMPORTS
+================================ */
 import coursesRoutes from "./routes/courses.js";
 import usersRoutes from "./routes/users.js";
 import studentsRoutes from "./routes/students.js";
@@ -29,36 +31,42 @@ import performanceRouter from "./routes/performance.js";
 import reportRouter from "./routes/report.js";
 import rankingRoutes from "./routes/ranking.js";
 
-/* PATH SETUP */
+/* ================================
+   PATH SETUP
+================================ */
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 
 /* ================================
-   ✅ PRODUCTION CORS CONFIG
+   ✅ CORS CONFIG (FIXED FOR VERCEL + RENDER)
 ================================ */
 const allowedOrigins = [
-  "https://your-frontend-domain.com", // 🔒 production frontend
-  "http://localhost:5173",            // local dev (Vite)
-  "http://localhost:3000"
+  "https://cohatmicollege.vercel.app"
 ];
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
+    // allow server-to-server or Postman
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
       callback(new Error("CORS not allowed"));
     }
   },
-  methods: ["GET", "POST", "PUT", "DELETE"],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true
 }));
 
+// 🔑 REQUIRED FOR PREFLIGHT (THIS FIXES YOUR ERROR)
+app.options("*", cors());
+
 /* ================================
-   MIDDLEWARE
+   BODY PARSING
 ================================ */
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
@@ -100,7 +108,7 @@ app.use("/api/ranking", rankingRoutes);
    GLOBAL ERROR HANDLER
 ================================ */
 app.use((err, req, res, next) => {
-  console.error(err.message);
+  console.error("❌ Error:", err.message);
   res.status(500).json({
     success: false,
     message: "Server error"
@@ -111,6 +119,6 @@ app.use((err, req, res, next) => {
    SERVER START
 ================================ */
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () =>
-  console.log(`✅ Server running on port ${PORT}`)
-);
+app.listen(PORT, () => {
+  console.log(`✅ Server running on port ${PORT}`);
+});
