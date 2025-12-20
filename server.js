@@ -40,7 +40,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 
 /* ================================
-   ✅ CORS CONFIG (FIXED FOR VERCEL + RENDER)
+   ✅ CORS CONFIG (PRODUCTION SAFE)
 ================================ */
 const allowedOrigins = [
   "https://cohatmicollege.vercel.app"
@@ -48,9 +48,7 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, callback) => {
-    // allow server-to-server or Postman
-    if (!origin) return callback(null, true);
-
+    if (!origin) return callback(null, true); // server-to-server or Postman
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
@@ -62,7 +60,7 @@ app.use(cors({
   credentials: true
 }));
 
-// 🔑 REQUIRED FOR PREFLIGHT (THIS FIXES YOUR ERROR)
+// Required for preflight requests
 app.options("*", cors());
 
 /* ================================
@@ -77,7 +75,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 /* ================================
-   ROUTES
+   API ROUTES
 ================================ */
 app.use("/api/users", usersRoutes);
 app.use("/api/students", studentsRoutes);
@@ -103,6 +101,19 @@ app.use("/api/student-modules", studentModulesRoutes);
 app.use("/api/media", mediaRoutes);
 app.use("/api/reports", reportRouter);
 app.use("/api/ranking", rankingRoutes);
+
+/* ================================
+   REACT FRONTEND SERVING (PRODUCTION)
+================================ */
+if (process.env.NODE_ENV === "production") {
+  const buildPath = path.join(__dirname, "client", "dist"); // adjust if your build folder is different
+  app.use(express.static(buildPath));
+
+  // Catch-all route for React SPA
+  app.get("/*", (req, res) => {
+    res.sendFile(path.join(buildPath, "index.html"));
+  });
+}
 
 /* ================================
    GLOBAL ERROR HANDLER
