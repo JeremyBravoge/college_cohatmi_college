@@ -1,11 +1,12 @@
 {
   "name": "vct-backend",
   "version": "1.0.0",
-  "description": "",
-  "main": "serverjs",
+  "description": "Vocational Training System Backend",
+  "main": "server.js",
   "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js",
+    "dev": "nodemon server.js"
   },
   "keywords": [],
   "author": "",
@@ -20,5 +21,8 @@
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2",
     "mysql2": "^3.14.5"
+  },
+  "engines": {
+    "node": "20.x"
   }
 }
