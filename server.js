@@ -24,7 +24,6 @@ app.use(express.urlencoded({ extended: true }));
 app.use((req, res, next) => {
   if (req.url !== '/health') {
     console.log(`${new Date().toISOString()} ${req.method} ${req.url}`);
-    console.log('Body:', req.body);
   }
   next();
 });
@@ -107,26 +106,15 @@ app.get("/api/test", (req, res) => {
 });
 
 /* ================================
-   FIXED LOGIN ROUTE (with body check)
+   FIXED LOGIN ROUTE
 ================================ */
 app.post("/api/users/login", (req, res) => {
   console.log("LOGIN REQUEST BODY:", req.body);
   
-  // Check if body exists
-  if (!req.body) {
+  if (!req.body || !req.body.email || !req.body.password) {
     return res.status(400).json({
       success: false,
-      message: "No request body received",
-      error: "Body parser may not be working"
-    });
-  }
-  
-  // Check for email and password
-  if (!req.body.email || !req.body.password) {
-    return res.status(400).json({
-      success: false,
-      message: "Email and password are required",
-      received: req.body
+      message: "Email and password are required"
     });
   }
   
@@ -171,7 +159,7 @@ app.post("/api/users/login", (req, res) => {
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 /* ================================
-   LOAD ALL YOUR API ROUTES
+   LOAD ALL YOUR API ROUTES - FIXED TYPO
 ================================ */
 console.log("📦 Loading all API routes...");
 
@@ -188,7 +176,7 @@ async function loadRoute(routePath, routeFile) {
   }
 }
 
-// Load ALL your routes in parallel
+// Load ALL your routes in parallel - FIXED: route.file not routeFile
 (async () => {
   const routes = [
     { path: "/api/users", file: "./routes/users.js" },
@@ -217,7 +205,8 @@ async function loadRoute(routePath, routeFile) {
     { path: "/api/ranking", file: "./routes/ranking.js" }
   ];
 
-  const loadPromises = routes.map(route => loadRoute(route.path, routeFile));
+  // FIXED: Use route.file instead of routeFile
+  const loadPromises = routes.map(route => loadRoute(route.path, route.file));
   const results = await Promise.allSettled(loadPromises);
   
   const loadedCount = results.filter(r => r.status === 'fulfilled' && r.value).length;
@@ -266,7 +255,6 @@ app.use("/api/*", (req, res) => {
 ================================ */
 app.use((err, req, res, next) => {
   console.error("❌ Server Error:", err.message);
-  console.error("Error stack:", err.stack);
   res.status(500).json({
     success: false,
     message: "Server error: " + err.message
