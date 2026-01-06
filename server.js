@@ -1,4 +1,4 @@
-import 'dotenv/config'; // ADD THIS LINE
+import 'dotenv/config';
 
 import express from "express";
 import cors from "cors";
@@ -6,8 +6,111 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 /* ================================
-   ROUTES IMPORTS
+   PATH SETUP
 ================================ */
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const app = express();
+
+/* ================================
+   REQUEST LOGGING
+================================ */
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} ${req.method} ${req.url}`);
+  console.log('Origin:', req.headers.origin);
+  next();
+});
+
+/* ================================
+   ✅ CORS CONFIGURATION
+================================ */
+const allowedOrigins = [
+  "https://cohatmicollege.vercel.app",
+  "http://localhost:3000",
+  "http://localhost:5173"
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.log(`❌ CORS blocked: ${origin}`);
+      callback(new Error(`CORS not allowed`));
+    }
+  },
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true
+}));
+
+// Handle preflight
+app.options("*", cors());
+
+/* ================================
+   HEALTH CHECK (RENDER REQUIRES THIS)
+================================ */
+app.get("/health", (req, res) => {
+  res.status(200).json({ 
+    status: "healthy",
+    service: "college-backend",
+    timestamp: new Date().toISOString()
+  });
+});
+
+/* ================================
+   ROOT ROUTE
+================================ */
+app.get("/", (req, res) => {
+  res.json({
+    message: "College Management System API",
+    version: "1.0.0",
+    status: "running",
+    endpoints: {
+      health: "/health",
+      test: "/api/test",
+      dashboard: "/api/dashboard",
+      users: "/api/users",
+      students: "/api/students",
+      courses: "/api/courses"
+    },
+    cors: {
+      allowedOrigins: allowedOrigins,
+      enabled: true
+    },
+    timestamp: new Date().toISOString()
+  });
+});
+
+/* ================================
+   TEST ROUTE
+================================ */
+app.get("/api/test", (req, res) => {
+  res.json({ 
+    message: "API test successful!",
+    cors: "configured"
+  });
+});
+
+/* ================================
+   BODY PARSING
+================================ */
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true }));
+
+/* ================================
+   STATIC FILES
+================================ */
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+/* ================================
+   API ROUTES IMPORTS
+================================ */
+// Import all your routes
 import coursesRoutes from "./routes/courses.js";
 import usersRoutes from "./routes/users.js";
 import studentsRoutes from "./routes/students.js";
@@ -34,107 +137,9 @@ import reportRouter from "./routes/report.js";
 import rankingRoutes from "./routes/ranking.js";
 
 /* ================================
-   PATH SETUP
-================================ */
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const app = express();
-
-/* ================================
-   REQUEST LOGGING MIDDLEWARE
-================================ */
-app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} ${req.method} ${req.url}`);
-  console.log('Origin:', req.headers.origin);
-  console.log('User-Agent:', req.headers['user-agent']?.substring(0, 50));
-  next();
-});
-
-/* ================================
-   ✅ IMPROVED CORS CONFIGURATION
-================================ */
-const allowedOrigins = [
-  "https://cohatmicollege.vercel.app",
-  "http://localhost:3000",
-  "http://localhost:5173"
-];
-
-app.use(cors({
-  origin: function (origin, callback) {
-    console.log(`🌍 CORS check for origin: ${origin}`);
-    
-    // Allow requests with no origin
-    if (!origin) {
-      console.log("✅ Allowing request with no origin");
-      return callback(null, true);
-    }
-    
-    if (allowedOrigins.includes(origin)) {
-      console.log(`✅ CORS allowed for: ${origin}`);
-      callback(null, true);
-    } else {
-      console.log(`❌ CORS blocked: ${origin}`);
-      callback(new Error(`CORS not allowed for origin: ${origin}`));
-    }
-  },
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-  allowedHeaders: [
-    "Content-Type", 
-    "Authorization", 
-    "X-Requested-With",
-    "Accept",
-    "Origin",
-    "Access-Control-Request-Method",
-    "Access-Control-Request-Headers"
-  ],
-  credentials: true,
-  optionsSuccessStatus: 204
-}));
-
-// Handle preflight requests
-app.options('*', cors());
-
-/* ================================
-   HEALTH CHECK (REQUIRED FOR RENDER)
-================================ */
-app.get("/health", (req, res) => {
-  console.log("✅ Health check passed");
-  res.status(200).json({ 
-    status: "healthy",
-    service: "college-backend",
-    timestamp: new Date().toISOString(),
-    node: process.version
-  });
-});
-
-/* ================================
-   TEST ROUTE
-================================ */
-app.get("/api/test", (req, res) => {
-  console.log("✅ Test route hit");
-  res.json({ 
-    message: "API is working!",
-    timestamp: new Date().toISOString(),
-    cors: "configured",
-    allowedOrigins: allowedOrigins
-  });
-});
-
-/* ================================
-   BODY PARSING
-================================ */
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true }));
-
-/* ================================
-   STATIC FILES
-================================ */
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
-
-/* ================================
    API ROUTES
 ================================ */
+console.log("📦 Loading API routes...");
 app.use("/api/users", usersRoutes);
 app.use("/api/students", studentsRoutes);
 app.use("/api/courses", coursesRoutes);
@@ -159,36 +164,32 @@ app.use("/api/student-modules", studentModulesRoutes);
 app.use("/api/media", mediaRoutes);
 app.use("/api/reports", reportRouter);
 app.use("/api/ranking", rankingRoutes);
+console.log("✅ All API routes loaded");
 
 /* ================================
-   REACT FRONTEND SERVING (PRODUCTION)
+   REACT FRONTEND SERVING (OPTIONAL)
 ================================ */
+// Only if you have React build in client/dist
 if (process.env.NODE_ENV === "production") {
-  const buildPath = path.join(__dirname, "client", "dist");
-  console.log("🏗️ Serving React from:", buildPath);
-  
-  // Check if build exists
   import('fs').then(fs => {
+    const buildPath = path.join(__dirname, "client", "dist");
     if (fs.existsSync(buildPath)) {
+      console.log("🌐 Serving React frontend from:", buildPath);
       app.use(express.static(buildPath));
-      app.get("/*", (req, res) => {
+      app.get("*", (req, res) => {
         res.sendFile(path.join(buildPath, "index.html"));
       });
-      console.log("✅ React frontend serving enabled");
-    } else {
-      console.log("⚠️ No React build found, API-only mode");
     }
   });
 }
 
 /* ================================
-   404 HANDLER
+   404 HANDLER FOR API ROUTES
 ================================ */
-app.use((req, res) => {
-  console.log(`❌ 404: ${req.method} ${req.url}`);
+app.use("/api/*", (req, res) => {
   res.status(404).json({
     success: false,
-    message: `Route not found: ${req.method} ${req.url}`
+    message: `API route not found: ${req.method} ${req.originalUrl}`
   });
 });
 
@@ -196,28 +197,20 @@ app.use((req, res) => {
    GLOBAL ERROR HANDLER
 ================================ */
 app.use((err, req, res, next) => {
-  console.error("🔥 Server Error:", {
-    message: err.message,
-    stack: err.stack,
-    url: req.url,
-    method: req.method,
-    origin: req.headers.origin
-  });
+  console.error("❌ Error:", err.message);
   
-  // Handle CORS errors specifically
   if (err.message.includes("CORS")) {
     return res.status(403).json({
       success: false,
-      message: err.message,
-      allowedOrigins: allowedOrigins
+      message: "CORS error: Request blocked",
+      allowedOrigins: allowedOrigins,
+      yourOrigin: req.headers.origin
     });
   }
   
-  res.status(err.status || 500).json({
+  res.status(500).json({
     success: false,
-    message: process.env.NODE_ENV === 'production' 
-      ? 'Server error' 
-      : err.message
+    message: "Server error"
   });
 });
 
@@ -227,22 +220,15 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 10000;
 const HOST = '0.0.0.0';
 
-const server = app.listen(PORT, HOST, () => {
+app.listen(PORT, HOST, () => {
   console.log(`
 ✅ ==================================
-✅ Server running successfully!
-✅ Port: ${PORT}
-✅ Host: ${HOST}
+✅ Server running on port ${PORT}
 ✅ Environment: ${process.env.NODE_ENV || 'development'}
-✅ Allowed Origins: ${allowedOrigins.join(', ')}
-✅ Health: http://${HOST}:${PORT}/health
-✅ Test: http://${HOST}:${PORT}/api/test
-✅ Dashboard: http://${HOST}:${PORT}/api/dashboard
+✅ CORS enabled for: ${allowedOrigins.join(', ')}
+✅ Health check: /health
+✅ Root API: /
+✅ Dashboard: /api/dashboard
 ✅ ==================================
   `);
-});
-
-server.on('error', (error) => {
-  console.error('🔥 Server failed to start:', error);
-  process.exit(1);
 });
