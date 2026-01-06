@@ -17,14 +17,14 @@ const app = express();
    REQUEST LOGGING MIDDLEWARE
 ================================ */
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} ${req.method} ${req.url}`);
-  console.log('Origin:', req.headers.origin || 'No origin');
-  console.log('Content-Type:', req.headers['content-type'] || 'No content-type');
+  if (req.url !== '/health') {
+    console.log(`${new Date().toISOString()} ${req.method} ${req.url}`);
+  }
   next();
 });
 
 /* ================================
-   ✅ FIXED CORS CONFIGURATION
+   ✅ CORS CONFIGURATION
 ================================ */
 const allowedOrigins = [
   "https://cohatmicollege.vercel.app",
@@ -32,52 +32,37 @@ const allowedOrigins = [
   "http://localhost:5173"
 ];
 
-// Handle preflight requests FIRST
+// Handle preflight requests
 app.options('*', (req, res) => {
   const origin = req.headers.origin;
-  
   if (allowedOrigins.includes(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Access-Control-Max-Age', '86400');
-    console.log(`✅ Preflight handled for: ${origin}`);
   }
-  
   res.sendStatus(204);
 });
 
-// Main CORS middleware
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (server-to-server, curl, Postman)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.includes(origin)) {
+    if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      console.log(`❌ CORS blocked: ${origin}`);
-      callback(new Error(`CORS not allowed`));
+      callback(new Error('CORS not allowed'));
     }
   },
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
-  credentials: true,
-  optionsSuccessStatus: 204
+  credentials: true
 }));
 
 /* ================================
-   HEALTH CHECK (RENDER REQUIRES THIS)
+   HEALTH CHECK
 ================================ */
 app.get("/health", (req, res) => {
-  console.log("✅ Health check passed");
   res.status(200).json({ 
     status: "healthy",
     service: "college-backend",
-    timestamp: new Date().toISOString(),
-    node: process.version,
-    cors: "enabled"
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -92,34 +77,23 @@ app.get("/", (req, res) => {
     endpoints: {
       health: "/health",
       login: "POST /api/users/login",
-      dashboard: "GET /api/dashboard",
-      users: "/api/users",
-      students: "/api/students",
-      courses: "/api/courses"
-    },
-    cors: {
-      allowedOrigins: allowedOrigins,
-      enabled: true
+      dashboard: "GET /api/dashboard"
     },
     timestamp: new Date().toISOString()
   });
 });
 
 /* ================================
-   TEST ROUTES (FOR DEBUGGING)
+   DEBUG ROUTES
 ================================ */
 app.get("/api/test", (req, res) => {
   res.json({ 
     success: true,
-    message: "API test successful!",
-    cors: "configured",
-    timestamp: new Date().toISOString()
+    message: "API test successful!"
   });
 });
 
-// Debug login endpoint (always returns success)
 app.post("/api/debug-login", (req, res) => {
-  console.log("🔍 Debug login called:", req.body);
   res.json({
     success: true,
     message: "Debug login successful",
@@ -129,31 +103,8 @@ app.post("/api/debug-login", (req, res) => {
       name: "Debug User",
       role: "admin"
     },
-    token: "debug-jwt-token-123456",
-    debug: true,
-    timestamp: new Date().toISOString()
+    token: "debug-jwt-token-123456"
   });
-});
-
-// Test database connection
-app.get("/api/db-test", async (req, res) => {
-  try {
-    // Import db dynamically to avoid loading issues
-    const db = await import('./config/db.js');
-    const [result] = await db.default.execute('SELECT 1 as test');
-    res.json({
-      success: true,
-      message: "Database connected",
-      result: result
-    });
-  } catch (error) {
-    console.error("Database test error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Database connection failed",
-      error: error.message
-    });
-  }
 });
 
 /* ================================
@@ -168,157 +119,61 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 /* ================================
-   API ROUTES IMPORTS WITH ERROR HANDLING
+   LOAD ROUTES ASYNCHRONOUSLY
 ================================ */
-console.log("📦 Loading API routes...");
-
-// Import routes with better error handling
-let routesLoaded = 0;
-const totalRoutes = 22; // Adjust based on your routes
-
-try {
-  import coursesRoutes from "./routes/courses.js";
-  import usersRoutes from "./routes/users.js";
-  import studentsRoutes from "./routes/students.js";
-  import intakesRoutes from "./routes/intakes.js";
-  import dashboardRoutes from "./routes/dashboard.js";
-  import activitiesRoutes from "./routes/activities.js";
-  import financeRoutes from "./routes/finance.js";
-  import departmentRoutes from "./routes/department.js";
-  import branchRoutes from "./routes/branches.js";
-  import levelsRoutes from "./routes/levels.js";
-  import facilitiesRoutes from "./routes/facilities.js";
-  import repairsRoutes from "./routes/repairs.js";
-  import transactionRoutes from "./routes/transaction.js";
-  import vocationalPerformanceRoutes from "./routes/vocationalPerformanceRoutes.js";
-  import modulesRoutes from "./routes/modules.js";
-  import instructorRoutes from "./routes/instructors.js";
-  import studentPerformanceRoutes from "./routes/studentPerformanceRoutes.js";
-  import notificationsRoutes from "./routes/notifications.js";
-  import enrollmentsRoutes from "./routes/enrollments.js";
-  import studentModulesRoutes from "./routes/studentModules.js";
-  import mediaRoutes from "./routes/mediaRoutes.js";
-  import performanceRouter from "./routes/performance.js";
-  import reportRouter from "./routes/report.js";
-  import rankingRoutes from "./routes/ranking.js";
-
-  console.log("✅ All route imports successful");
-} catch (importError) {
-  console.error("❌ Route import error:", importError.message);
-}
-
-/* ================================
-   API ROUTES REGISTRATION
-================================ */
-try {
-  app.use("/api/users", (await import("./routes/users.js")).default);
-  console.log("✅ Users route loaded");
-  routesLoaded++;
-} catch (error) {
-  console.error("❌ Failed to load users route:", error.message);
-  // Fallback for login if users route fails
-  app.post("/api/users/login", (req, res) => {
-    res.status(500).json({
-      success: false,
-      message: "Users module failed to load",
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  });
-}
-
-try {
-  app.use("/api/students", (await import("./routes/students.js")).default);
-  console.log("✅ Students route loaded");
-  routesLoaded++;
-} catch (error) {
-  console.error("❌ Failed to load students route:", error.message);
-}
-
-try {
-  app.use("/api/courses", (await import("./routes/courses.js")).default);
-  console.log("✅ Courses route loaded");
-  routesLoaded++;
-} catch (error) {
-  console.error("❌ Failed to load courses route:", error.message);
-}
-
-try {
-  app.use("/api/intakes", (await import("./routes/intakes.js")).default);
-  console.log("✅ Intakes route loaded");
-  routesLoaded++;
-} catch (error) {
-  console.error("❌ Failed to load intakes route:", error.message);
-}
-
-try {
-  app.use("/api/dashboard", (await import("./routes/dashboard.js")).default);
-  console.log("✅ Dashboard route loaded");
-  routesLoaded++;
-} catch (error) {
-  console.error("❌ Failed to load dashboard route:", error.message);
-}
-
-// Load other routes similarly...
-app.use("/api/activities", (await import("./routes/activities.js")).default);
-app.use("/api/finance", (await import("./routes/finance.js")).default);
-app.use("/api/departments", (await import("./routes/department.js")).default);
-app.use("/api/branches", (await import("./routes/branches.js")).default);
-app.use("/api/levels", (await import("./routes/levels.js")).default);
-app.use("/api/facilities", (await import("./routes/facilities.js")).default);
-app.use("/api/repairs", (await import("./routes/repairs.js")).default);
-app.use("/api/transactions", (await import("./routes/transaction.js")).default);
-app.use("/api/modules", (await import("./routes/modules.js")).default);
-app.use("/api/instructors", (await import("./routes/instructors.js")).default);
-app.use("/api/student-performance", (await import("./routes/studentPerformanceRoutes.js")).default);
-app.use("/api/performance", (await import("./routes/performance.js")).default);
-app.use("/api/vocational-performance", (await import("./routes/vocationalPerformanceRoutes.js")).default);
-app.use("/api/notifications", (await import("./routes/notifications.js")).default);
-app.use("/api/enrollments", (await import("./routes/enrollments.js")).default);
-app.use("/api/student-modules", (await import("./routes/studentModules.js")).default);
-app.use("/api/media", (await import("./routes/mediaRoutes.js")).default);
-app.use("/api/reports", (await import("./routes/report.js")).default);
-app.use("/api/ranking", (await import("./routes/ranking.js")).default);
-
-console.log(`✅ ${routesLoaded}/${totalRoutes} routes loaded successfully`);
-
-/* ================================
-   REACT FRONTEND SERVING (OPTIONAL)
-================================ */
-if (process.env.NODE_ENV === "production") {
-  import('fs').then(fs => {
-    const buildPath = path.join(__dirname, "client", "dist");
-    if (fs.existsSync(buildPath)) {
-      console.log("🌐 Serving React frontend from:", buildPath);
-      app.use(express.static(buildPath));
-      app.get("*", (req, res) => {
-        res.sendFile(path.join(buildPath, "index.html"));
+async function loadRoutes() {
+  console.log("📦 Loading API routes...");
+  
+  try {
+    // Load routes dynamically
+    const { default: usersRoutes } = await import("./routes/users.js");
+    app.use("/api/users", usersRoutes);
+    console.log("✅ Users route loaded");
+    
+    const { default: studentsRoutes } = await import("./routes/students.js");
+    app.use("/api/students", studentsRoutes);
+    console.log("✅ Students route loaded");
+    
+    const { default: coursesRoutes } = await import("./routes/courses.js");
+    app.use("/api/courses", coursesRoutes);
+    console.log("✅ Courses route loaded");
+    
+    const { default: dashboardRoutes } = await import("./routes/dashboard.js");
+    app.use("/api/dashboard", dashboardRoutes);
+    console.log("✅ Dashboard route loaded");
+    
+    // Load other routes as needed
+    const { default: intakesRoutes } = await import("./routes/intakes.js");
+    app.use("/api/intakes", intakesRoutes);
+    
+    // Add more routes here as needed...
+    
+    console.log("✅ All routes loaded successfully");
+    
+  } catch (error) {
+    console.error("❌ Error loading routes:", error.message);
+    
+    // Fallback login route if users route fails
+    app.post("/api/users/login", (req, res) => {
+      console.log("⚠️ Using fallback login route");
+      res.status(500).json({
+        success: false,
+        message: "Routes failed to load: " + error.message
       });
-    } else {
-      console.log("⚠️ No React build found, API-only mode");
-    }
-  }).catch(err => {
-    console.log("⚠️ Cannot check for React build:", err.message);
-  });
+    });
+  }
 }
 
+// Start loading routes
+loadRoutes().catch(console.error);
+
 /* ================================
-   404 HANDLER FOR API ROUTES
+   404 HANDLER
 ================================ */
 app.use("/api/*", (req, res) => {
-  console.log(`❌ 404: ${req.method} ${req.originalUrl}`);
   res.status(404).json({
     success: false,
-    message: `API route not found: ${req.method} ${req.originalUrl}`,
-    availableEndpoints: [
-      "GET    /health",
-      "POST   /api/users/login",
-      "POST   /api/debug-login",
-      "GET    /api/dashboard",
-      "GET    /api/test",
-      "GET    /api/db-test"
-    ],
-    timestamp: new Date().toISOString()
+    message: `API route not found: ${req.method} ${req.url}`
   });
 });
 
@@ -326,23 +181,18 @@ app.use("/api/*", (req, res) => {
    GLOBAL ERROR HANDLER
 ================================ */
 app.use((err, req, res, next) => {
-  console.error("🔥 Server Error:", err.message);
-  console.error("Stack:", err.stack);
+  console.error("❌ Error:", err.message);
   
   if (err.message.includes("CORS")) {
     return res.status(403).json({
       success: false,
-      message: "CORS error: Request blocked",
-      allowedOrigins: allowedOrigins,
-      yourOrigin: req.headers.origin,
-      timestamp: new Date().toISOString()
+      message: "CORS error"
     });
   }
   
-  res.status(err.status || 500).json({
+  res.status(500).json({
     success: false,
-    message: process.env.NODE_ENV === 'production' ? 'Server error' : err.message,
-    timestamp: new Date().toISOString()
+    message: "Server error"
   });
 });
 
@@ -352,45 +202,14 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 10000;
 const HOST = '0.0.0.0';
 
-const server = app.listen(PORT, HOST, () => {
+app.listen(PORT, HOST, () => {
   console.log(`
-✅ ============================================
-✅ Server successfully started!
-✅ Port: ${PORT}
-✅ Host: ${HOST}
+✅ ==================================
+✅ Server running on port ${PORT}
 ✅ Environment: ${process.env.NODE_ENV || 'development'}
 ✅ CORS enabled for: ${allowedOrigins.join(', ')}
 ✅ Health check: /health
 ✅ Debug login: POST /api/debug-login
-✅ Database test: GET /api/db-test
-✅ ============================================
-✅ Ready for frontend connections from:
-✅   https://cohatmicollege.vercel.app
-✅ ============================================
+✅ ==================================
   `);
-  
-  // Test the server internally
-  console.log("🔍 Internal server test:");
-  console.log(`   Health: http://${HOST}:${PORT}/health`);
-  console.log(`   API Root: http://${HOST}:${PORT}/`);
 });
-
-// Handle server errors
-server.on('error', (error) => {
-  console.error('🔥 Server failed to start:', error);
-  if (error.code === 'EADDRINUSE') {
-    console.error(`Port ${PORT} is already in use`);
-  }
-  process.exit(1);
-});
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received. Shutting down gracefully...');
-  server.close(() => {
-    console.log('Server closed');
-    process.exit(0);
-  });
-});
-
-export default app;
