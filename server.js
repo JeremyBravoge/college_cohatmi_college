@@ -1,3 +1,5 @@
+import 'dotenv/config'; // ADD THIS LINE
+
 import express from "express";
 import cors from "cors";
 import path from "path";
@@ -40,22 +42,84 @@ const __dirname = path.dirname(__filename);
 const app = express();
 
 /* ================================
-   ✅ GLOBAL CORS (PRODUCTION SAFE)
+   REQUEST LOGGING MIDDLEWARE
+================================ */
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} ${req.method} ${req.url}`);
+  console.log('Origin:', req.headers.origin);
+  console.log('User-Agent:', req.headers['user-agent']?.substring(0, 50));
+  next();
+});
+
+/* ================================
+   ✅ IMPROVED CORS CONFIGURATION
 ================================ */
 const allowedOrigins = [
-  "https://cohatmicollege.vercel.app"
+  "https://cohatmicollege.vercel.app",
+  "http://localhost:3000",
+  "http://localhost:5173"
 ];
 
 app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin) return callback(null, true); // server-to-server or Postman
-    if (allowedOrigins.includes(origin)) callback(null, true);
-    else callback(new Error("CORS not allowed"));
+  origin: function (origin, callback) {
+    console.log(`🌍 CORS check for origin: ${origin}`);
+    
+    // Allow requests with no origin
+    if (!origin) {
+      console.log("✅ Allowing request with no origin");
+      return callback(null, true);
+    }
+    
+    if (allowedOrigins.includes(origin)) {
+      console.log(`✅ CORS allowed for: ${origin}`);
+      callback(null, true);
+    } else {
+      console.log(`❌ CORS blocked: ${origin}`);
+      callback(new Error(`CORS not allowed for origin: ${origin}`));
+    }
   },
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-  credentials: true
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+  allowedHeaders: [
+    "Content-Type", 
+    "Authorization", 
+    "X-Requested-With",
+    "Accept",
+    "Origin",
+    "Access-Control-Request-Method",
+    "Access-Control-Request-Headers"
+  ],
+  credentials: true,
+  optionsSuccessStatus: 204
 }));
+
+// Handle preflight requests
+app.options('*', cors());
+
+/* ================================
+   HEALTH CHECK (REQUIRED FOR RENDER)
+================================ */
+app.get("/health", (req, res) => {
+  console.log("✅ Health check passed");
+  res.status(200).json({ 
+    status: "healthy",
+    service: "college-backend",
+    timestamp: new Date().toISOString(),
+    node: process.version
+  });
+});
+
+/* ================================
+   TEST ROUTE
+================================ */
+app.get("/api/test", (req, res) => {
+  console.log("✅ Test route hit");
+  res.json({ 
+    message: "API is working!",
+    timestamp: new Date().toISOString(),
+    cors: "configured",
+    allowedOrigins: allowedOrigins
+  });
+});
 
 /* ================================
    BODY PARSING
@@ -100,30 +164,85 @@ app.use("/api/ranking", rankingRoutes);
    REACT FRONTEND SERVING (PRODUCTION)
 ================================ */
 if (process.env.NODE_ENV === "production") {
-  const buildPath = path.join(__dirname, "client", "dist"); // adjust if your React build folder differs
-  app.use(express.static(buildPath));
-
-  // ✅ Catch-all route for React SPA
-  app.get("/*", (req, res) => {
-    res.sendFile(path.join(buildPath, "index.html"));
+  const buildPath = path.join(__dirname, "client", "dist");
+  console.log("🏗️ Serving React from:", buildPath);
+  
+  // Check if build exists
+  import('fs').then(fs => {
+    if (fs.existsSync(buildPath)) {
+      app.use(express.static(buildPath));
+      app.get("/*", (req, res) => {
+        res.sendFile(path.join(buildPath, "index.html"));
+      });
+      console.log("✅ React frontend serving enabled");
+    } else {
+      console.log("⚠️ No React build found, API-only mode");
+    }
   });
 }
+
+/* ================================
+   404 HANDLER
+================================ */
+app.use((req, res) => {
+  console.log(`❌ 404: ${req.method} ${req.url}`);
+  res.status(404).json({
+    success: false,
+    message: `Route not found: ${req.method} ${req.url}`
+  });
+});
 
 /* ================================
    GLOBAL ERROR HANDLER
 ================================ */
 app.use((err, req, res, next) => {
-  console.error("❌ Error:", err.message);
-  res.status(500).json({
+  console.error("🔥 Server Error:", {
+    message: err.message,
+    stack: err.stack,
+    url: req.url,
+    method: req.method,
+    origin: req.headers.origin
+  });
+  
+  // Handle CORS errors specifically
+  if (err.message.includes("CORS")) {
+    return res.status(403).json({
+      success: false,
+      message: err.message,
+      allowedOrigins: allowedOrigins
+    });
+  }
+  
+  res.status(err.status || 500).json({
     success: false,
-    message: "Server error"
+    message: process.env.NODE_ENV === 'production' 
+      ? 'Server error' 
+      : err.message
   });
 });
 
 /* ================================
    SERVER START
 ================================ */
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
+const PORT = process.env.PORT || 10000;
+const HOST = '0.0.0.0';
+
+const server = app.listen(PORT, HOST, () => {
+  console.log(`
+✅ ==================================
+✅ Server running successfully!
+✅ Port: ${PORT}
+✅ Host: ${HOST}
+✅ Environment: ${process.env.NODE_ENV || 'development'}
+✅ Allowed Origins: ${allowedOrigins.join(', ')}
+✅ Health: http://${HOST}:${PORT}/health
+✅ Test: http://${HOST}:${PORT}/api/test
+✅ Dashboard: http://${HOST}:${PORT}/api/dashboard
+✅ ==================================
+  `);
+});
+
+server.on('error', (error) => {
+  console.error('🔥 Server failed to start:', error);
+  process.exit(1);
 });
