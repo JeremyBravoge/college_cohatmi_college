@@ -13,11 +13,18 @@ const __dirname = path.dirname(__filename);
 const app = express();
 
 /* ================================
+   ✅ CRITICAL: BODY PARSING MUST COME FIRST
+================================ */
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true }));
+
+/* ================================
    REQUEST LOGGING
 ================================ */
 app.use((req, res, next) => {
   if (req.url !== '/health') {
     console.log(`${new Date().toISOString()} ${req.method} ${req.url}`);
+    console.log('Body:', req.body);
   }
   next();
 });
@@ -89,10 +96,8 @@ app.get("/", (req, res) => {
 });
 
 /* ================================
-   GUARANTEED WORKING ROUTES
+   TEST ROUTE
 ================================ */
-
-// TEST ROUTE
 app.get("/api/test", (req, res) => {
   res.json({ 
     success: true, 
@@ -101,15 +106,27 @@ app.get("/api/test", (req, res) => {
   });
 });
 
-// GUARANTEED LOGIN ROUTE (WILL ALWAYS WORK)
+/* ================================
+   FIXED LOGIN ROUTE (with body check)
+================================ */
 app.post("/api/users/login", (req, res) => {
-  console.log("LOGIN REQUEST:", req.body);
+  console.log("LOGIN REQUEST BODY:", req.body);
   
-  // Simple working authentication
+  // Check if body exists
+  if (!req.body) {
+    return res.status(400).json({
+      success: false,
+      message: "No request body received",
+      error: "Body parser may not be working"
+    });
+  }
+  
+  // Check for email and password
   if (!req.body.email || !req.body.password) {
     return res.status(400).json({
       success: false,
-      message: "Email and password are required"
+      message: "Email and password are required",
+      received: req.body
     });
   }
   
@@ -147,12 +164,6 @@ app.post("/api/users/login", (req, res) => {
     message: "Invalid email or password"
   });
 });
-
-/* ================================
-   BODY PARSING
-================================ */
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true }));
 
 /* ================================
    STATIC FILES
@@ -206,34 +217,12 @@ async function loadRoute(routePath, routeFile) {
     { path: "/api/ranking", file: "./routes/ranking.js" }
   ];
 
-  const loadPromises = routes.map(route => loadRoute(route.path, route.file));
+  const loadPromises = routes.map(route => loadRoute(route.path, routeFile));
   const results = await Promise.allSettled(loadPromises);
   
   const loadedCount = results.filter(r => r.status === 'fulfilled' && r.value).length;
   console.log(`🎯 ${loadedCount}/${routes.length} routes loaded successfully`);
 })();
-
-/* ================================
-   FALLBACK ROUTES FOR CRITICAL ENDPOINTS
-================================ */
-
-// If dashboard fails to load, provide fallback
-app.get("/api/dashboard", (req, res) => {
-  res.json({
-    success: true,
-    message: "Dashboard data",
-    stats: {
-      students: 8,
-      courses: 5,
-      users: 3,
-      intakes: 1,
-      instructors: 2,
-      enrollments: 8,
-      revenueThisMonth: "1000.00",
-      averagePerformance: "79.86"
-    }
-  });
-});
 
 /* ================================
    REACT FRONTEND SERVING (OPTIONAL)
@@ -264,7 +253,7 @@ app.use("/api/*", (req, res) => {
     success: false,
     message: `API route not found: ${req.method} ${req.originalUrl}`,
     availableEndpoints: [
-      "POST /api/users/login (GUARANTEED)",
+      "POST /api/users/login",
       "GET /api/dashboard",
       "GET /health",
       "GET /api/test"
@@ -277,9 +266,10 @@ app.use("/api/*", (req, res) => {
 ================================ */
 app.use((err, req, res, next) => {
   console.error("❌ Server Error:", err.message);
+  console.error("Error stack:", err.stack);
   res.status(500).json({
     success: false,
-    message: "Server error"
+    message: "Server error: " + err.message
   });
 });
 
