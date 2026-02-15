@@ -111,21 +111,21 @@ app.get("/api/test", (req, res) => {
 app.post("/api/users/login", (req, res) => {
   console.log("LOGIN REQUEST BODY:", req.body);
   
-  if (!req.body || !req.body.email || !req.body.password) {
+  if (!req.body || !req.body.username || !req.body.password) {
     return res.status(400).json({
       success: false,
-      message: "Email and password are required"
+      message: "Username and password are required"
     });
   }
   
   // Test credentials
-  if (req.body.email === "admin@example.com" && req.body.password === "admin123") {
+  if (req.body.username === "admin" && req.body.password === "admin123") {
     return res.json({
       success: true,
       message: "Login successful",
       user: {
         id: 1,
-        email: "admin@example.com",
+        username: "admin",
         name: "Admin User",
         role: "admin"
       },
@@ -133,13 +133,13 @@ app.post("/api/users/login", (req, res) => {
     });
   }
   
-  if (req.body.email === "student@example.com" && req.body.password === "student123") {
+  if (req.body.username === "student" && req.body.password === "student123") {
     return res.json({
       success: true,
       message: "Login successful",
       user: {
         id: 2,
-        email: "student@example.com",
+        username: "student",
         name: "Student User",
         role: "student"
       },
@@ -149,7 +149,7 @@ app.post("/api/users/login", (req, res) => {
   
   res.status(401).json({
     success: false,
-    message: "Invalid email or password"
+    message: "Invalid username or password"
   });
 });
 
